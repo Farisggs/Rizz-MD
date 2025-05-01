@@ -1,176 +1,192 @@
-                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                       // index.js - WhatsApp Bot MD with Pairing Code
-const { makeWASocket, useMultiFileAuthState, DisconnectReason } = require('@whiskeysockets/baileys')
-const qrcode = require('qrcode-terminal')
+// index.js - WhatsApp Bot MD Premium (Pairing Code Only)
+const { makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys')
 const chalk = require('chalk')
 const moment = require('moment')
 const fs = require('fs')
 const axios = require('axios')
+const { imageToSticker } = require('./lib/sticker')
+const { Gempa, IGDownloader } = require('./lib/downloader')
+const { ChatGPT } = require('./lib/ai')
+const Database = require('./lib/database')
 
-// Configuration
+// Config
 const config = {
-    name: "🤖 MyBot-MD",
-    prefix: "!",
-    owner: "62812xxxxxx@s.whatsapp.net", // Ganti dengan nomor Anda
-    pairingCode: process.argv[2] || null // Ambil pairing code dari argument
+    name: "🤖 Giska MD",
+    prefix: "#",
+    owner: "6285803412962@s.whatsapp.net",
+    openai_key: "sk-xxx", // Dapatkan di platform.openai.com
+    db_path: "./database.json"
 }
 
-// Main Function
+// [1] FITUR DATABASE
+const db = new Database(config.db_path)
+
+// [2] PAIRING CODE VALIDATION
+if (!process.argv[2]) {
+    console.log(chalk.red(`Gunakan: node index.js <pairing-code>`))
+    process.exit(1)
+}
+
+// Main Bot
 async function startBot() {
-    console.log(chalk.yellow(`[ ${moment().format('HH:mm:ss')} ] Starting bot...`))
-    
-    // Load session
     const { state, saveCreds } = await useMultiFileAuthState('auth_info')
 
-    // Create connection
     const sock = makeWASocket({
-        printQRInTerminal: !config.pairingCode, // Nonaktifkan QR jika pakai pairing
         auth: state,
-        mobile: false, // Required for pairing
-        browser: ['BOT-MD', 'Chrome', '3.0'],
-        generateHighQualityLink: true
+        mobile: false,
+        printQRInTerminal: false,
+        browser: ['MegaBot', 'Chrome', '3.0']
     })
 
-    // Connection update handler
-    sock.ev.on('connection.update', (update) => {
-        const { connection, lastDisconnect, qr, isNewLogin, pairingCode } = update
-        
-        // QR Code Handler
-        if (qr && !config.pairingCode) {
-            console.log(chalk.green('\nScan QR ini dengan WhatsApp:'))
-            qrcode.generate(qr, { small: true })
-        }
-
-        // Pairing Code Handler
-        if (pairingCode && !config.pairingCode) {
-            console.log(chalk.blue('\nPairing Code:'), chalk.yellow(pairingCode))
-            fs.writeFileSync('pairing_code.txt', pairingCode)
-        }
-
-        // Connection status
-        if (connection === 'open') {
-            console.log(chalk.green('\nBot berhasil terhubung!'))
-            notifyOwner(sock, `*${config.name} aktif!* 🚀\nJam: ${moment().format('LLLL')}`)
-            
-            // Cleanup pairing file
-            if (fs.existsSync('pairing_code.txt')) {
-                fs.unlinkSync('pairing_code.txt')
-            }
-        }
-
-        // Auto reconnect
-        if (connection === 'close') {
-            const shouldReconnect = lastDisconnect.error?.output?.statusCode !== DisconnectReason.loggedOut
-            console.log(chalk.red('\nConnection lost, reconnecting...'))
-            if (shouldReconnect) setTimeout(startBot, 5000)
-        }
-    })
-
-    // Save session
+    // [3] FITUR AUTO-SAVE SESSION
     sock.ev.on('creds.update', saveCreds)
 
-    // Message handler
+    // [4] FITUR CONNECTION HANDLER
+    sock.ev.on('connection.update', (update) => {
+        if (update.connection === 'open') {
+            console.log(chalk.green('✅ Bot aktif via Pairing Code'))
+            sock.sendMessage(config.owner, { 
+                text: `*${config.name} Active!*\nMode: Pairing Code\nLast Login: ${moment().format('LLLL')}` 
+            })
+        }
+    })
+
+    // [5] FITUR MESSAGE HANDLER (LENGKAP)
     sock.ev.on('messages.upsert', async ({ messages }) => {
         const m = messages[0]
         if (!m.message || m.key.fromMe) return
-        
+
         const text = getMessageText(m)
         const sender = m.key.remoteJid
         const pushName = m.pushName || 'User'
-        
-        // Command handler
+        const isOwner = sender === config.owner
+
+        // [6] FITUR COMMAND HANDLER
         if (text.startsWith(config.prefix)) {
             const cmd = text.slice(config.prefix.length).trim().split(/ +/).shift().toLowerCase()
             const args = text.split(' ').slice(1)
-            
-            console.log(chalk.cyan(`[CMD] ${pushName}: ${cmd}`))
-            
+
             try {
                 switch(cmd) {
-                    case 'ping':
-                        await reply(sock, m, `🏓 Pong! | ${Date.now() - m.messageTimestamp * 1000}ms`)
+                    // [7] FITUR AI CHATGPT
+                    case 'ai':
+                        if (!args[0]) return reply(m, "Tanya apa? Contoh: #ai jelaskan teori relativitas")
+                        const aiResponse = await ChatGPT(args.join(' '), config.openai_key)
+                        await reply(m, `🤖 AI Response:\n\n${aiResponse}`)
                         break
-                        
-                    case 'help':
-                        const helpMsg = `*${config.name} Commands*\n\n`
-                            + `${config.prefix}ping - Test bot\n`
-                            + `${config.prefix}help - Show menu\n`
-                            + `${config.prefix}owner - Bot owner\n`
-                            + `${config.prefix}time - Current time\n`
-                            + `${config.prefix}quote - Random quote\n`
-                            + `${config.prefix}sticker - Create sticker`
-                        await reply(sock, m, helpMsg)
+
+                    // [8] FITUR DOWNLOADER
+                    case 'igdl':
+                        if (!args[0]) return reply(m, "Masukkan URL Instagram! Contoh: #igdl https://www.instagram.com/p/xxx")
+                        const igData = await IGDownloader(args[0])
+                        await sock.sendMessage(sender, { 
+                            video: { url: igData.url }, 
+                            caption: `Downloaded from: ${args[0]}`
+                        })
                         break
-                        
-                    case 'time':
-                        await reply(sock, m, `⏰ ${moment().format('dddd, DD MMMM YYYY HH:mm:ss')}`)
+
+                    // [9] FITUR DATABASE
+                    case 'simpan':
+                        if (!isOwner) return reply(m, "Owner only!")
+                        db.set(args[0], args.slice(1).join(' '))
+                        await reply(m, `Data tersimpan dengan key: ${args[0]}`)
                         break
-                        
-                    case 'owner':
-                        await reply(sock, m, `👑 Owner: wa.me/${config.owner.split('@')[0]}`)
+
+                    case 'ambil':
+                        const data = db.get(args[0])
+                        await reply(m, data || "Data tidak ditemukan")
                         break
-                        
-                    case 'quote':
-                        const quote = await getQuote()
-                        await reply(sock, m, `💬 "${quote.content}"\n- ${quote.author}`)
-                        break
-                        
-                    case 'sticker':
-                        if (m.message.imageMessage) {
-                            await createSticker(sock, m)
-                        } else {
-                            await reply(sock, m, 'Kirim gambar dengan caption !sticker')
+
+                    // [10] FITUR ADMIN TOOLS
+                    case 'bc': // Broadcast
+                        if (!isOwner) return reply(m, "Owner only!")
+                        const allChats = await sock.groupFetchAllParticipating()
+                        for (const group in allChats) {
+                            await sock.sendMessage(group, { text: args.join(' ') })
+                            await delay(2000)
                         }
                         break
-                        
+
+                    // [11] FITUR UTILITAS
+                    case 'gempa':
+                        const gempaInfo = await Gempa()
+                        await reply(m, `⚠️ *Info Gempa Terkini*:\n${gempaInfo}`)
+                        break
+
+                    // [12] FITUR STICKER CREATOR
+                    case 'sticker':
+                        if (m.message.imageMessage) {
+                            const stickerBuffer = await imageToSticker(m, sock)
+                            await sock.sendMessage(sender, { sticker: stickerBuffer })
+                        } else {
+                            await reply(m, "Kirim gambar dengan caption #sticker")
+                        }
+                        break
+
+                    // [13] FITUR GRUP MANAGEMENT
+                    case 'kick':
+                        if (!m.key.remoteJid.endsWith('@g.us')) return reply(m, "Hanya untuk grup!")
+                        if (!isOwner) return reply(m, "Owner only!")
+                        await sock.groupParticipantsUpdate(m.key.remoteJid, [args[0]], 'remove')
+                        await reply(m, `User ${args[0]} telah dikick`)
+                        break
+
                     default:
-                        await reply(sock, m, `Invalid command! Ketik ${config.prefix}help untuk menu`)
+                        await reply(m, `Perintah tidak dikenal. Ketik #menu untuk bantuan`)
                 }
             } catch (err) {
                 console.error(chalk.red('[ERROR]', err))
-                await reply(sock, m, '⚠️ Error processing command')
+                await reply(m, "Terjadi error saat memproses perintah")
             }
         }
     })
-}
 
-// Helper Functions
-function getMessageText(msg) {
-    return msg.message.conversation || 
-           msg.message.extendedTextMessage?.text || 
-           msg.message.imageMessage?.caption || ''
-}
+    // Helper functions
+    async function reply(msg, text) {
+        await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg })
+    }
 
-async function reply(sock, msg, text) {
-    await sock.sendMessage(msg.key.remoteJid, { text }, { quoted: msg })
-}
-
-async function notifyOwner(sock, text) {
-    if (config.owner) await sock.sendMessage(config.owner, { text })
-}
-
-async function getQuote() {
-    try {
-        const res = await axios.get('https://api.quotable.io/random')
-        return { content: res.data.content, author: res.data.author }
-    } catch {
-        return { 
-            content: "The best way to predict the future is to create it.",
-            author: "Abraham Lincoln" 
-        }
+    function getMessageText(msg) {
+        return msg.message.conversation || 
+               msg.message.extendedTextMessage?.text || 
+               msg.message.imageMessage?.caption || ''
     }
 }
 
-async function createSticker(sock, msg) {
-    try {
-        const media = await sock.downloadMediaMessage(msg)
-        await sock.sendMessage(msg.key.remoteJid, {
-            sticker: Buffer.from(media, 'base64')
-        }, { quoted: msg })
-    } catch (err) {
-        console.error(chalk.red('[STICKER ERROR]', err))
-        await reply(sock, msg, 'Failed to create sticker')
+startBot().catch(console.error)
+
+// ============ LIBRARY ============ 
+// Simpan di folder ./lib/
+// File: ./lib/ai.js
+class ChatGPT {
+    static async query(prompt, apiKey) {
+        const response = await axios.post('https://api.openai.com/v1/chat/completions', {
+            model: "gpt-3.5-turbo",
+            messages: [{role: "user", content: prompt}]
+        }, {
+            headers: { 'Authorization': `Bearer ${apiKey}` }
+        })
+        return response.data.choices[0].message.content
     }
 }
 
-// Start bot with pairing code if provided
-startBot().catch(err => console.log(chalk.red('[START ERROR]', err)))                                                   
+// File: ./lib/database.js
+class Database {
+    constructor(path) {
+        this.path = path
+        this.data = fs.existsSync(path) ? JSON.parse(fs.readFileSync(path)) : {}
+    }
+
+    set(key, value) {
+        this.data[key] = value
+        this.save()
+    }
+
+    get(key) {
+        return this.data[key]
+    }
+
+    save() {
+        fs.writeFileSync(this.path, JSON.stringify(this.data))
+    }
+}
