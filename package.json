@@ -1,0 +1,23 @@
+{
+      "name": "whatsapp-bot-md",
+        "version": "2.0.0",
+          "description": "Advanced WhatsApp Multi-Device Bot",
+            "main": "index.js",
+              "scripts": {
+                  "start": "node index.js",
+                      "dev": "nodemon index.js"
+                        },
+                          "keywords": [],
+                            "author": "YourName",
+                              "license": "MIT",
+                                "dependencies": {
+                                    "@whiskeysockets/baileys": "^6.4.0",
+                                        "axios": "^1.6.2",
+                                            "moment": "^2.29.4",
+                                                "qrcode-terminal": "^0.12.0",
+                                                    "chalk": "^4.1.2"
+                                                      },
+                                                        "devDependencies": {
+                                                            "nodemon": "^3.0.2"
+                                                              }
+                                                              }
